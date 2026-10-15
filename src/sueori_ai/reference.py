@@ -1,4 +1,7 @@
-"""ai-io-v0 Python 기준 구현 (정본).
+"""ai-io-v0 / ai-io-v1 Python 기준 구현 (정본).
+
+v1의 차이는 §10 폴백뿐이다: 입력을 정규화한 뒤 x를 반전(x → −x)한 버전도 채점해 비용이 더 작은 쪽을 쓴다.
+동률이면 원본을 쓴다. 폴백 함수는 `spec_version` 인자로 버전을 고르고, 기본값은 현재 버전(spec.SPEC_VERSION)이다.
 
 TS(sueori-FE)·Dart(sueori-AOS)·Swift(sueori-IOS) 구현은 이 모듈이 만든 공통 테스트
 벡터(vectors/ai-io-v0-vectors.json)를 통과해야 한다.
@@ -151,16 +154,31 @@ def _clamp_score(x: float) -> float:
     return 0.0 if x < 0.0 else (100.0 if x > 100.0 else x)
 
 
+def mirror_vector(v: Vector) -> Vector:
+    """v1 반전: 정규화된 63차원 벡터의 x 성분 부호를 바꾼다(스펙 §3 증강과 같은 정의).
+
+    이미지 좌표에서 1 − x로 뒤집는 것과 수학적으로 같지만 부동소수점 마지막 비트가 달라질 수 있어 쓰지 않는다.
+    """
+    return [-c if i % 3 == 0 else c for i, c in enumerate(v)]
+
+
 @dataclass(frozen=True)
 class StaticResult:
     score: float
     distance: float
+    mirrored: bool = False  # v1: 반전 쪽을 썼는지
 
 
-def static_score(reference: Frame, candidate: Frame) -> StaticResult:
-    """§10.1 정적 거리 점수: clamp(100·exp(−2.0·d), 0, 100)."""
-    d = landmark_distance(normalize_frame(reference), normalize_frame(candidate))
-    return StaticResult(score=_clamp_score(100.0 * math.exp(-spec.STATIC_DECAY * d)), distance=d)
+def static_score(reference: Frame, candidate: Frame, *, spec_version: str = spec.SPEC_VERSION) -> StaticResult:
+    """§10.1 정적 거리 점수: clamp(100·exp(−2.0·d), 0, 100). v1은 반전 후보와 비교해 d가 더 작은 쪽."""
+    spec.check_version(spec_version)
+    r, c = normalize_frame(reference), normalize_frame(candidate)
+    d, mirrored = landmark_distance(r, c), False
+    if spec.MIRROR_FALLBACK[spec_version]:
+        dm = landmark_distance(r, mirror_vector(c))
+        if dm < d:  # 동률이면 원본
+            d, mirrored = dm, True
+    return StaticResult(score=_clamp_score(100.0 * math.exp(-spec.STATIC_DECAY * d)), distance=d, mirrored=mirrored)
 
 
 @dataclass(frozen=True)
@@ -168,20 +186,33 @@ class DtwResult:
     score: float
     avg_cost: float
     path_length: int
+    mirrored: bool = False  # v1: 반전 쪽을 썼는지
 
 
-def dtw_score(reference: Sequence[Frame], candidate: Sequence[Frame]) -> DtwResult:
-    """§10.2 DTW 점수. 리샘플하지 않고, 윈도우 제약도 없다.
+def dtw_score(reference: Sequence[Frame], candidate: Sequence[Frame], *, spec_version: str = spec.SPEC_VERSION) -> DtwResult:
+    """§10.2 DTW 점수. 리샘플하지 않고, 윈도우 제약도 없다. v1은 반전 후보와 비교해 평균 비용이 더 작은 쪽.
 
     동적 입력의 N<8 규칙은 호출하는 쪽(`score_dynamic`)에서 적용한다. 이 함수는 MVP
     DtwScorer와 같은 동작(빈 시퀀스면 0점)을 유지해 교차 확인에 쓸 수 있게 한다.
     """
+    spec.check_version(spec_version)
     a = [normalize_frame(f) for f in reference]
     b = [normalize_frame(f) for f in candidate]
-    n, m = len(a), len(b)
-    if n == 0 or m == 0:
+    if len(a) == 0 or len(b) == 0:
         return DtwResult(score=0.0, avg_cost=math.inf, path_length=0)
+    avg_cost, path_length = _dtw_core(a, b)
+    mirrored = False
+    if spec.MIRROR_FALLBACK[spec_version]:
+        am, lm = _dtw_core(a, [mirror_vector(v) for v in b])
+        if am < avg_cost:  # 동률이면 원본
+            avg_cost, path_length, mirrored = am, lm, True
+    score = _clamp_score(100.0 * math.exp(-spec.DTW_DECAY * avg_cost))
+    return DtwResult(score=score, avg_cost=avg_cost, path_length=path_length, mirrored=mirrored)
 
+
+def _dtw_core(a: list[Vector], b: list[Vector]) -> tuple[float, int]:
+    """정규화 벡터 시퀀스 → (평균 정렬 비용, 경로 길이)."""
+    n, m = len(a), len(b)
     inf = math.inf
     d = [[inf] * (m + 1) for _ in range(n + 1)]
     d[0][0] = 0.0
@@ -191,9 +222,7 @@ def dtw_score(reference: Sequence[Frame], candidate: Sequence[Frame]) -> DtwResu
             d[i][j] = cost + min(d[i - 1][j], d[i][j - 1], d[i - 1][j - 1])
 
     path_length = _backtrack(d, n, m)
-    avg_cost = d[n][m] / path_length
-    score = _clamp_score(100.0 * math.exp(-spec.DTW_DECAY * avg_cost))
-    return DtwResult(score=score, avg_cost=avg_cost, path_length=path_length)
+    return d[n][m] / path_length, path_length
 
 
 def _backtrack(d: list[list[float]], n: int, m: int) -> int:
@@ -220,15 +249,15 @@ def _backtrack(d: list[list[float]], n: int, m: int) -> int:
     return length
 
 
-def score_dynamic(reference: Sequence[Frame], candidate: Sequence[Frame]) -> DtwResult:
+def score_dynamic(reference: Sequence[Frame], candidate: Sequence[Frame], *, spec_version: str = spec.SPEC_VERSION) -> DtwResult:
     """동적 트랙 하나의 폴백 채점(유효성 규칙 포함). 채점 불가면 InvalidInput."""
     if len(candidate) < spec.MIN_DYNAMIC_FRAMES:
         raise InvalidInput(f"유효 프레임 {len(candidate)}개 < {spec.MIN_DYNAMIC_FRAMES}")
-    return dtw_score(reference, candidate)
+    return dtw_score(reference, candidate, spec_version=spec_version)
 
 
 def best_track_score(
-    reference: Sequence[Frame], tracks: dict[str, Sequence[Frame]], *, dynamic: bool
+    reference: Sequence[Frame], tracks: dict[str, Sequence[Frame]], *, dynamic: bool, spec_version: str = spec.SPEC_VERSION
 ) -> Optional[tuple[str, float]]:
     """§3 handedness 트랙별로 채점하고 최고점 트랙을 고른다. 채점 가능한 트랙이 없으면 None.
 
@@ -238,11 +267,11 @@ def best_track_score(
     for label, frames in tracks.items():
         try:
             if dynamic:
-                s = score_dynamic(reference, frames).score
+                s = score_dynamic(reference, frames, spec_version=spec_version).score
             else:
                 if not frames:
                     continue
-                s = static_score(reference[0], frames[0]).score
+                s = static_score(reference[0], frames[0], spec_version=spec_version).score
         except InvalidInput:
             continue
         if best is None or s > best[1]:

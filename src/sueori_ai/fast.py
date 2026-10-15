@@ -90,17 +90,41 @@ def landmark_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(_pairwise_cost(np.asarray(a)[None, :], np.asarray(b)[None, :])[0, 0])
 
 
-def static_score(reference_frame, candidate_frame) -> float:
-    d = landmark_distance(normalize_frames(reference_frame)[0], normalize_frames(candidate_frame)[0])
+def mirror_vectors(v: np.ndarray) -> np.ndarray:
+    """v1 반전: 정규화 벡터의 x 성분 부호를 바꾼다(reference.mirror_vector와 같음)."""
+    out = np.array(v, dtype=np.float64, copy=True)
+    out[..., 0::3] = -out[..., 0::3]
+    return out
+
+
+def static_score(reference_frame, candidate_frame, *, spec_version: str = spec.SPEC_VERSION) -> float:
+    spec.check_version(spec_version)
+    r, c = normalize_frames(reference_frame)[0], normalize_frames(candidate_frame)[0]
+    d = landmark_distance(r, c)
+    if spec.MIRROR_FALLBACK[spec_version]:
+        dm = landmark_distance(r, mirror_vectors(c))
+        d = dm if dm < d else d  # 동률이면 원본
     x = 100.0 * math.exp(-spec.STATIC_DECAY * d)
     return 0.0 if x < 0.0 else (100.0 if x > 100.0 else x)
 
 
-def dtw_score(reference_frames, candidate_frames) -> DtwResult:
+def dtw_score(reference_frames, candidate_frames, *, spec_version: str = spec.SPEC_VERSION) -> DtwResult:
     """reference.dtw_score와 같은 결과(비용 행렬만 numpy, 누적·되짚기는 같은 순서의 Python float)."""
+    spec.check_version(spec_version)
     if len(reference_frames) == 0 or len(candidate_frames) == 0:
         return DtwResult(score=0.0, avg_cost=math.inf, path_length=0)
-    cost = _pairwise_cost(normalize_frames(reference_frames), normalize_frames(candidate_frames)).tolist()
+    a, b = normalize_frames(reference_frames), normalize_frames(candidate_frames)
+    avg, length = _dtw_core(_pairwise_cost(a, b).tolist())
+    mirrored = False
+    if spec.MIRROR_FALLBACK[spec_version]:
+        am, lm = _dtw_core(_pairwise_cost(a, mirror_vectors(b)).tolist())
+        if am < avg:  # 동률이면 원본
+            avg, length, mirrored = am, lm, True
+    x = 100.0 * math.exp(-spec.DTW_DECAY * avg)
+    return DtwResult(score=0.0 if x < 0.0 else (100.0 if x > 100.0 else x), avg_cost=avg, path_length=length, mirrored=mirrored)
+
+
+def _dtw_core(cost: list[list[float]]) -> tuple[float, int]:
     n, m = len(cost), len(cost[0])
     inf = math.inf
     d = [[inf] * (m + 1) for _ in range(n + 1)]
@@ -125,6 +149,4 @@ def dtw_score(reference_frames, candidate_frames) -> DtwResult:
                 i -= 1
             else:
                 j -= 1
-    avg = d[n][m] / length
-    x = 100.0 * math.exp(-spec.DTW_DECAY * avg)
-    return DtwResult(score=0.0 if x < 0.0 else (100.0 if x > 100.0 else x), avg_cost=avg, path_length=length)
+    return d[n][m] / length, length

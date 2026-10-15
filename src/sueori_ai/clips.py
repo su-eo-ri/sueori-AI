@@ -50,9 +50,10 @@ def validate(record: dict) -> list[str]:
         errors.append(f"word_type 값 이상: {record['word_type']}")
     if record["label"] == "near_miss" and not record.get("error_type"):
         errors.append("near_miss에는 error_type이 필요함")
+    # 수집 클립은 원시 좌표라 spec 버전과 무관하게 다시 계산할 수 있다 → 지원 버전이면 받는다
     sv = record.get("spec_version")
-    if sv is not None and sv != spec.SPEC_VERSION:
-        errors.append(f"spec_version 불일치: {sv} (이 코드는 {spec.SPEC_VERSION})")
+    if sv is not None and sv not in spec.SUPPORTED_VERSIONS:
+        errors.append(f"spec_version 미지원: {sv} (지원: {spec.SUPPORTED_VERSIONS})")
     if not isinstance(record["frames"], list):
         errors.append("frames는 리스트여야 함")
     return errors

@@ -210,3 +210,41 @@ def test_recording_duration_rounds_half_away_from_zero():
     assert ref.recording_duration_ms(0, 2083.75) == 2501
     # floor(x + 0.5)는 0.49999999999999994 + 0.5 = 1.0으로 틀린다 — 소수부 비교로 피함
     assert ref.recording_duration_ms(0, (2000 + 0.49999999999999994) / 1.2) in (2000, 2001)
+
+
+# ── v1 폴백 좌우 반전 ──
+
+
+def _left(frame):
+    return [[1.0 - x, y, z] for x, y, z in frame]
+
+
+def test_v0_fails_left_hand_and_v1_fixes_it():
+    seq = motion([HandPose(), HandPose(index=1, roll=0.5)], 20)
+    left = [_left(f) for f in seq]
+    v0 = ref.dtw_score(seq, left, spec_version="ai-io-v0")
+    v1 = ref.dtw_score(seq, left, spec_version="ai-io-v1")
+    assert v0.score < 50 and not v0.mirrored
+    assert v1.score > 99.9 and v1.mirrored
+    s0 = ref.static_score(V_SIGN, _left(V_SIGN), spec_version="ai-io-v0")
+    s1 = ref.static_score(V_SIGN, _left(V_SIGN), spec_version="ai-io-v1")
+    assert s0.score < 80 and s1.score > 99.9 and s1.mirrored
+
+
+def test_v1_right_hand_scores_unchanged():
+    seq = motion([HandPose(), HandPose(index=1, roll=0.5)], 20)
+    other = motion([HandPose(yaw=-0.6, x=0.4), HandPose(yaw=0.6, x=0.6)], 25)
+    for cand in (seq, other):
+        a, b = ref.dtw_score(seq, cand, spec_version="ai-io-v0"), ref.dtw_score(seq, cand, spec_version="ai-io-v1")
+        assert b.score >= a.score  # v1은 max라 낮아질 수 없다
+
+
+def test_mirror_tie_keeps_original():
+    flat = [[OPEN[0][0], y, z] for _, y, z in OPEN]  # 정규화 후 x가 전부 0 → 반전해도 같음
+    r = ref.static_score(OPEN, flat, spec_version="ai-io-v1")
+    assert not r.mirrored
+
+
+def test_unknown_spec_version_rejected():
+    with pytest.raises(ValueError):
+        ref.static_score(OPEN, OPEN, spec_version="ai-io-v9")

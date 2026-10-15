@@ -6,8 +6,13 @@ MediaPipe Hand Landmarker가 뽑은 손 랜드마크 시퀀스를 입력으로 �
 Keras로 학습하고, 웹(TF.js)과 Android·iOS(TFLite)로 변환해 온디바이스로 추론한다. 모델이 없거나
 꺼졌을 때는 각 클라이언트가 같은 명세의 DTW/거리 채점으로 폴백한다.
 
-- 입출력 계약: 모델 입출력 스펙 **`ai-io-v0`** (2026-10-15 고정) — 정규화, 리샘플, 텐서 `[1, 32, 63] → [1, 48]`,
+- 입출력 계약: 모델 입출력 스펙 **`ai-io-v1`** (현재) — 정규화, 리샘플, 텐서 `[1, 32, 63] → [1, 48]`,
   점수, 폴백 알고리즘, 테스트 벡터 허용 오차
+  - `ai-io-v0`(2026-10-15 고정)은 기록용이다. **클라이언트는 v1부터 구현한다**
+  - **v0 → v1 변경은 폴백(§10)의 좌우 반전 하나뿐**이다. 입력을 정규화한 뒤 x를 반전(x → −x)한 버전도 채점해 비용이 더 작은 쪽을 쓰고,
+    동률이면 원본을 쓴다. v0 폴백은 오른손 기준과 그대로 비교해서 왼손 사용자가 정확히 해도 통과할 수 없었다(실제 국립국어원 기준: 지문자 0/40,
+    가족 0.3~13점). 반전으로 새로 생긴 오답은 실제 기준 지문자 0/1560쌍, 가족 0/42쌍이었다. 모델 입력(§2·§4·§5)은 v0과 같다
+  - 다음 변경(학습 후 데이터 표준값)은 `ai-io-v2`로 낸다
 - 이 레포가 **정본**인 것: Python 기준 구현(`src/sueori_ai/reference.py`)과 공통 테스트 벡터(`vectors/`)
 - 클라이언트: `sueori-FE`(React/TS), `sueori-AOS`(Flutter/Dart), `sueori-IOS`(Swift)는 각자 구현하고 벡터를 통과해야 한다
 
@@ -25,8 +30,8 @@ Keras로 학습하고, 웹(TF.js)과 Android·iOS(TFLite)로 변환해 온디바
 
 ```
 src/sueori_ai/
-  spec.py           ai-io-v0 상수 (T=32, 손바닥 5점, 감쇠 계수 2.0 / 6.5, 통과선 80 …)
-  reference.py      Python 기준 구현 — §2 정규화, §4 리샘플·텐서, §10 폴백(거리·DTW·트랙 선택·녹화 길이)
+  spec.py           스펙 상수와 버전(v0·v1, 버전별 폴백 반전 여부)
+  reference.py      Python 기준 구현 — §2 정규화, §4 리샘플·텐서, §10 폴백(거리·DTW·v1 반전·트랙 선택·녹화 길이)
   synthetic.py      합성 손 랜드마크 생성기(벡터·스모크용)
   fast.py           numpy 빠른 경로(학습·평가용) — reference.py와 비트 단위로 같은 결과
   clips.py          수집 클립 레코드(데이터 수집 프로토콜 protocol-v0 §6) 읽기·검증·트랙 분리
@@ -36,12 +41,13 @@ src/sueori_ai/
   evaluate.py       모델 vs DTW 폴백 — 스펙 §6 목표 표, Go/No-Go 판정(초안)
   convert.py        TFLite / TF.js 변환, 변환 일치성 검사, 고정 입력(합성)
 tools/
-  gen_vectors.py    공통 테스트 벡터 생성 → vectors/ai-io-v0-vectors.json
+  gen_vectors.py    공통 테스트 벡터 생성 → vectors/ai-io-v0-vectors.json(기록용), ai-io-v1-vectors.json(현재)
   smoke_convert.py  더미 모델 Keras → TFLite / TF.js 변환 + 출력 일치성 확인
   train_pipeline.py 학습 파이프라인(교차 검증 → 최종 학습 → 변환 → 리포트)
   tfjs_smoke/       TF.js 런타임(Node)으로 변환 모델을 로드·추론
 vectors/
-  ai-io-v0-vectors.json  공통 테스트 벡터 (합성 데이터)
+  ai-io-v0-vectors.json  공통 테스트 벡터 v0 (기록용, 합성 데이터)
+  ai-io-v1-vectors.json  공통 테스트 벡터 v1 (현재, 합성 데이터)
 tests/              pytest
 ```
 
@@ -96,12 +102,20 @@ uv run python tools/train_pipeline.py --data /path/to/snapshot --references /pat
 
 ## 공통 테스트 벡터 사용법 (클라이언트용)
 
-`vectors/ai-io-v0-vectors.json`의 특정 버전을 클라이언트 레포에 복사해 두고, 테스트에서 파일 sha256과
-`spec_version`을 확인한다.
+**`vectors/ai-io-v1-vectors.json`**의 특정 버전을 클라이언트 레포에 복사해 두고, 테스트에서 파일 sha256과
+`spec_version`을 확인한다. `ai-io-v0-vectors.json`은 기록용이다(코드가 바뀌어도 바이트 단위로 같게 재생성되는지 테스트한다).
 
-> **버전 계획 (2026-10-16)**: 지금은 `ai-io-v0`으로 구현한다. 학습을 진행한 뒤 데이터 표준값(정규화 등)을
-> 다시 정할 예정이다. 점수 결과가 바뀌면 스펙을 `ai-io-v1`로 올리고 `vectors/ai-io-v1-vectors.json`을 **새 파일로** 추가한다.
-> v0 파일은 지우지 않으므로, 각 클라이언트는 v1에 맞춰 한 번 더 구현을 맞추게 된다(어느 버전을 통과하는지는 `spec_version`으로 구분).
+- v1 파일 = v0 케이스 전부(반전이 쓰이지 않는 케이스는 점수가 v0과 같음) + 반전 전용 케이스(`v1_…`)
+  - `v1_mirror_wins_left_hand*`: 왼손 입력(이미지 좌우 반전)에서 반전 쪽이 이김. 점수가 오른손 대응 케이스와 같음
+  - `v1_mirror_tie_flat_x`: 정규화 후 x 성분이 전부 0이라 원본과 반전의 비용이 **비트 단위로 같음** → 원본을 써야 함
+  - `v1_left_hand_track_wins_by_mirror`: 트랙 선택(§3)과 반전이 함께 쓰이는 경우
+- `static_score`·`dtw`의 v1 기대값에는 `mirrored`(반전 쪽을 썼는지)가 있다. 점수는 동률에서 어느 쪽을 골라도 같으므로,
+  동률 규칙을 확인하려면 `mirrored`도 비교한다
+- 반전은 **정규화 후 x → −x**다. 이미지 좌표에서 1 − x로 뒤집으면 수학적으로는 같지만 마지막 비트가 달라질 수 있다
+
+> **버전 계획 (2026-10-16 갱신)**: 지금은 **`ai-io-v1`로 구현**한다(v1 = 폴백 좌우 반전). 학습을 진행한 뒤 데이터 표준값(정규화 등)을
+> 다시 정해 점수 결과가 바뀌면 `ai-io-v2`로 올리고 `vectors/ai-io-v2-vectors.json`을 **새 파일로** 추가한다.
+> 이전 버전 파일은 지우지 않으며, 어느 버전을 통과하는지는 `spec_version`으로 구분한다.
 
 - 실수는 가장 짧게 왕복되는 표현으로 적혀 있어 Float64 값이 그대로 복원된다
 - NaN·Infinity 좌표는 문자열 `"NaN"`, `"Infinity"`, `"-Infinity"`
