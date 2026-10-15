@@ -28,9 +28,17 @@ src/sueori_ai/
   spec.py           ai-io-v0 상수 (T=32, 손바닥 5점, 감쇠 계수 2.0 / 6.5, 통과선 80 …)
   reference.py      Python 기준 구현 — §2 정규화, §4 리샘플·텐서, §10 폴백(거리·DTW·트랙 선택·녹화 길이)
   synthetic.py      합성 손 랜드마크 생성기(벡터·스모크용)
+  fast.py           numpy 빠른 경로(학습·평가용) — reference.py와 비트 단위로 같은 결과
+  clips.py          수집 클립 레코드(데이터 수집 프로토콜 protocol-v0 §6) 읽기·검증·트랙 분리
+  synthetic_clips.py  합성 클립 데이터셋(테스트 가명 T001…) + 기준 시퀀스
+  dataset.py        라벨 맵(labels.json), 클립 → [32, 63] 예제, 촬영자 단위 분할, 좌우 반전 증강
+  model.py          v0 1D-CNN, 학습, 온도(τ) 보정
+  evaluate.py       모델 vs DTW 폴백 — 스펙 §6 목표 표, Go/No-Go 판정(초안)
+  convert.py        TFLite / TF.js 변환, 변환 일치성 검사, 고정 입력(합성)
 tools/
   gen_vectors.py    공통 테스트 벡터 생성 → vectors/ai-io-v0-vectors.json
   smoke_convert.py  더미 모델 Keras → TFLite / TF.js 변환 + 출력 일치성 확인
+  train_pipeline.py 학습 파이프라인(교차 검증 → 최종 학습 → 변환 → 리포트)
   tfjs_smoke/       TF.js 런타임(Node)으로 변환 모델을 로드·추론
 vectors/
   ai-io-v0-vectors.json  공통 테스트 벡터 (합성 데이터)
@@ -61,6 +69,30 @@ uv run python tools/smoke_convert.py      # 변환 스모크
 
 툴체인 버전을 올릴 때는 `smoke_convert.py`가 통과하는지 먼저 확인한다. tensorflowjs 변환기는 TF/Keras
 최신 버전을 늦게 따라가는 편이다.
+
+## 학습 파이프라인
+
+```bash
+uv run python tools/train_pipeline.py --synthetic                 # 합성 데이터로 끝까지 (약 20초)
+uv run python tools/train_pipeline.py --synthetic --participants 3 --epochs 5 --max-folds 1   # 빠른 확인
+
+# 실제 데이터: 수집 DB 스냅샷(JSONL, 클립 1개 = 1줄) + 기준 시퀀스 {word_key: frames}
+# ⚠️ 실제 데이터는 이 레포 밖 경로에 두고 가리킨다(커밋 금지)
+uv run python tools/train_pipeline.py --data /path/to/snapshot --references /path/to/references.json
+```
+
+흐름
+1. 클립을 읽고 검증한다(`qc_status = reject`는 제외). 라벨 맵 = 정답 클립의 단어(정렬) + `other`
+2. **촬영자 단위 교차 검증**(한 명씩 평가로 뺌): 학습 → 온도(τ) 보정 → 평가 촬영자의 (클립, 타깃 단어) 쌍을
+   **모델과 DTW 폴백으로 각각** 채점한다. 채점은 클라이언트와 같은 방식이다(트랙별 최고점, 타깃 단어 유형에 맞는 입력)
+3. 스펙 §6 보정 목표 표(정답 / 다른 단어 / 정지 자세 / 무관 동작 / 근접 오답)를 모델·DTW 양쪽으로 만들고 Go/No-Go를 판정한다
+4. 전체 촬영자로 최종 학습 → `labels.json`, TFLite(Android·iOS 같은 파일), TF.js 변환 → 변환 일치성 검사
+5. `build/train/<run>/`에 `report.md`·`report.json`, `labels.json`, `manifest.draft.json`(웹 `enabled=false`),
+   `conversion-vectors.json`(합성 고정 입력 + Keras 로짓), `artifacts/{web,android,ios}`
+
+> **Go/No-Go 기준은 초안이다**(`evaluate.GO_DRAFT`): §6 목표를 모두 충족하고, DTW보다 확실히 나으며(정답 통과율 +10%p 이상
+> 또는 오답 통과율이 DTW의 절반 이하), 어느 범주에서도 DTW보다 2%p 넘게 나빠지지 않아야 한다. PM·사용자 합의가 필요하다.
+> 합성 데이터의 수치는 의미가 없다.
 
 ## 공통 테스트 벡터 사용법 (클라이언트용)
 
