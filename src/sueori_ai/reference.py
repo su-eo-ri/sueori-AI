@@ -4,7 +4,7 @@ v1의 차이는 §10 폴백뿐이다: 입력을 정규화한 뒤 x를 반전(x �
 동률이면 원본을 쓴다. 폴백 함수는 `spec_version` 인자로 버전을 고르고, 기본값은 현재 버전(spec.SPEC_VERSION)이다.
 
 TS(sueori-FE)·Dart(sueori-AOS)·Swift(sueori-IOS) 구현은 이 모듈이 만든 공통 테스트
-벡터(vectors/ai-io-v0-vectors.json)를 통과해야 한다.
+벡터 **vectors/ai-io-v1-vectors.json**(현재 버전)을 통과해야 한다. ai-io-v0-vectors.json은 기록용이다.
 
 비트 단위 재현 규칙(스펙 §10.0)을 지키기 위해 numpy를 쓰지 않는다.
 - Python float는 IEEE 754 Float64다.
