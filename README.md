@@ -67,6 +67,10 @@ uv run python tools/smoke_convert.py      # 변환 스모크
 `vectors/ai-io-v0-vectors.json`의 특정 버전을 클라이언트 레포에 복사해 두고, 테스트에서 파일 sha256과
 `spec_version`을 확인한다.
 
+> **버전 계획 (2026-10-16)**: 지금은 `ai-io-v0`으로 구현한다. 학습을 진행한 뒤 데이터 표준값(정규화 등)을
+> 다시 정할 예정이다. 점수 결과가 바뀌면 스펙을 `ai-io-v1`로 올리고 `vectors/ai-io-v1-vectors.json`을 **새 파일로** 추가한다.
+> v0 파일은 지우지 않으므로, 각 클라이언트는 v1에 맞춰 한 번 더 구현을 맞추게 된다(어느 버전을 통과하는지는 `spec_version`으로 구분).
+
 - 실수는 가장 짧게 왕복되는 표현으로 적혀 있어 Float64 값이 그대로 복원된다
 - NaN·Infinity 좌표는 문자열 `"NaN"`, `"Infinity"`, `"-Infinity"`
 - `invalid: true` 케이스는 채점·정규화가 거부(예외 또는 채점 불가)되어야 한다
@@ -85,7 +89,10 @@ uv run python tools/smoke_convert.py      # 변환 스모크
 |---|---|---|---|
 | 1D-CNN (Conv1D×2 + GAP + Dense) | ✅ | ✅ | ≤ 3e-7 / ≤ 1e-6 |
 | GRU (Keras 기본값) | ❌ TensorList 연산을 기본 연산으로 못 바꿈 | ❌ `reset_after=True` 미지원 | — |
-| GRU (`reset_after=False, unroll=True`) | ✅ | ✅ (Node CPU 추론 약 15배 느림) | ≤ 3e-7 / ≤ 2e-6 |
+| GRU (`reset_after=False, unroll=True`) | ✅ | ✅ (Node 순수 JS CPU 백엔드에서 CNN보다 약 15배 느림 — 브라우저 미측정) | ≤ 3e-7 / ≤ 2e-6 |
 
-→ v0은 **1D-CNN**으로 시작한다. RNN 계열을 쓰려면 위 호환 설정이 필수이고, 웹 추론 속도를 따로 확인해야 한다.
-Node CPU 측정이라 브라우저(WebGL/WASM) 속도는 별도 스파이크에서 잰다.
+→ v0은 **1D-CNN**으로 시작한다. RNN 계열을 쓰려면 위 호환 설정이 필수다.
+
+⚠️ 속도 수치는 `tools/tfjs_smoke`의 **Node 순수 JS CPU 백엔드** 측정값이라 브라우저(WebGL/WASM) 성능을 대표하지 않는다.
+"GRU는 웹에서 15배 느리다"는 뜻이 아니다. 이 스모크의 목적은 변환·로드 가능 여부와 출력 일치성이다. RNN을 쓸지는
+React TF.js 스파이크의 브라우저 실측(모델 로딩 시간, 저사양 Android Chrome 추론 ms)으로 판단한다.
