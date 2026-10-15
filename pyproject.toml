@@ -1,0 +1,32 @@
+[project]
+name = "sueori-ai"
+version = "0.1.0"
+description = "수어리 수어 채점 모델: Python 기준 구현, 공통 테스트 벡터, 학습·변환 파이프라인"
+readme = "README.md"
+# TensorFlow 2.19가 지원하는 범위. 3.12 이상은 변환기 의존성(tensorflowjs → TF-DF/ydf) 검증 전이라 막아 둔다.
+requires-python = "==3.11.*"
+
+# 툴체인은 정확한 버전으로 고정한다(스펙 ai-io-v0, CTO 2026-10-15).
+# tensorflowjs 변환기는 TF/Keras 최신 버전을 늦게 따라가므로, 올릴 때는
+# tools/smoke_convert.py와 tools/tfjs_smoke 스모크가 통과하는지 먼저 확인한다.
+dependencies = [
+    "tensorflow==2.19.0",
+    # Keras 2 계열. 모델은 tf_keras로 정의한다(Keras 3 + tensorflowjs 호환 문제 회피).
+    "tf-keras==2.19.0",
+    "tensorflowjs==4.22.0",
+    # tensorflowjs가 끌어오는 TF-DF의 의존성. ydf 0.16은 protobuf gencode 6.x로 빌드돼
+    # TF 2.19의 protobuf 5.x 런타임과 import 시점에 충돌한다.
+    "ydf==0.15.0",
+    # setuptools 81 이상에는 pkg_resources가 없어 tensorflowjs import가 실패한다.
+    "setuptools==80.10.2",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.2"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,12 @@
+{
+  "name": "sueori-ai-tfjs-smoke",
+  "private": true,
+  "type": "module",
+  "description": "변환된 TF.js 모델을 Node에서 로드·추론해 Keras 원본과 비교 (tools/smoke_convert.py가 호출)",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "4.22.0"
+  }
+}
