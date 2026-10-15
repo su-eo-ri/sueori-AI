@@ -50,8 +50,17 @@ def _class_weights(y: np.ndarray, num_classes: int) -> dict[int, float]:
 
 
 def split_validation(ex: Examples, fraction: float, seed: int) -> tuple[Examples, Examples]:
-    """조기 종료·온도 보정용 검증 세트. 같은 클립(정적 클립의 여러 프레임)이 양쪽에 나뉘지 않게 sample_id 단위로 나눈다."""
+    """조기 종료·온도 보정용 검증 세트.
+
+    촬영자가 2명 이상이면 **촬영자 단위**로 1명을 뺀다(스펙 §6 "학습에 쓰지 않은 사람" 기준, CTO 2026-10-16).
+    1명뿐이면 sample_id 단위로 나눈다(같은 클립의 여러 프레임이 양쪽에 나뉘지 않게).
+    """
     rng = np.random.default_rng(seed)
+    people = np.unique(ex.participant)
+    if len(people) >= 2:
+        held = rng.choice(people)
+        mask = ex.participant == held
+        return ex.subset(~mask), ex.subset(mask)
     ids = np.unique(ex.sample_id)
     val_ids = set(rng.choice(ids, size=max(1, int(len(ids) * fraction)), replace=False).tolist())
     mask = np.array([s in val_ids for s in ex.sample_id])

@@ -134,21 +134,86 @@ def test_dtw_scores_match_fallback_semantics(small):
     assert np.nanmedian(vals) > 50  # 같은 단어끼리는 대체로 높게
 
 
-def test_go_decision_rules():
-    def s(correct, other, still=0.0, unrelated=0.0, near=60.0):
-        return {
-            "correct": {"pass_rate": correct, "median": 90.0, "max": 100.0},
-            "other_word": {"pass_rate": other, "median": 5.0, "max": 50.0},
-            "still": {"pass_rate": still, "median": 10.0, "max": 60.0},
-            "unrelated": {"pass_rate": unrelated, "median": 5.0, "max": 60.0},
-            "near_miss": {"pass_rate": 0.1, "median": near, "max": 85.0},
-        }
+def _summ(correct, other, still=0.0, unrelated=0.0, near=60.0, n=1000):
+    return {
+        "correct": {"n": n, "pass_rate": correct, "median": 90.0, "max": 100.0},
+        "other_word": {"n": n, "pass_rate": other, "median": 5.0, "max": 50.0},
+        "still": {"n": n, "pass_rate": still, "median": 10.0, "max": 60.0},
+        "unrelated": {"n": n, "pass_rate": unrelated, "median": 5.0, "max": 60.0},
+        "near_miss": {"n": n, "pass_rate": 0.1, "median": near, "max": 85.0},
+    }
 
-    assert ev.go_decision(s(0.98, 0.0), s(0.80, 0.0))["go"]  # +18%p, 목표 충족
-    assert not ev.go_decision(s(0.98, 0.0), s(0.95, 0.0))["go"]  # 확실히 낫지 않음
-    d = ev.go_decision(s(0.98, 0.0, still=0.05), s(0.80, 0.0, still=0.0))
+
+def test_go_decision_rules():
+    assert ev.go_decision(_summ(0.98, 0.0), _summ(0.80, 0.0))["go"]  # +18%p, 목표 충족
+    assert not ev.go_decision(_summ(0.98, 0.0), _summ(0.95, 0.0))["go"]  # 확실히 낫지 않음
+    d = ev.go_decision(_summ(0.98, 0.0, still=0.05), _summ(0.80, 0.0, still=0.0))
     assert not d["go"] and "still" in d["regressions"]  # 정지 자세 통과율이 DTW보다 나빠짐
-    assert not ev.go_decision(s(0.90, 0.0), s(0.70, 0.0))["meets_spec_targets"]  # 정답 95% 미달
+    assert not ev.go_decision(_summ(0.90, 0.0), _summ(0.70, 0.0))["meets_spec_targets"]  # 정답 95% 미달
+    d = ev.go_decision(_summ(0.98, 0.0, n=10), _summ(0.80, 0.0, n=10))
+    assert not d["go"] and "correct" in d["insufficient_samples"]  # 표본 부족
+
+
+def test_go_decision_uses_confidence_interval():
+    m, d = _summ(0.98, 0.0), _summ(0.80, 0.0)
+    assert ev.go_decision(m, d, ci={"correct_gain": (0.12, 0.25)})["go"]
+    # 점추정은 +18%p지만 하한이 +10%p 미만이면 "확실히 나음"이 아님
+    assert not ev.go_decision(m, d, ci={"correct_gain": (0.03, 0.30)})["clearly_better"]
+    # 점추정은 같아도 상한이 +2%p를 넘으면 퇴보로 본다
+    assert "still" in ev.go_decision(m, d, ci={"correct_gain": (0.12, 0.25), "still_diff": (-0.01, 0.04)})["regressions"]
+
+
+class _C:
+    def __init__(self, pid, hand="right"):
+        self.participant_id, self.dominant_hand, self.sample_id = pid, hand, pid
+
+
+def _pairs(spec_):
+    """[(참여자, 범주, 타깃, 모델 점수, DTW 점수, 손)] → (pairs, m, d)"""
+    pairs = [ev.Pair(_C(p, h), t, c) for p, c, t, _, _, h in spec_]
+    return pairs, np.array([m for *_, m, _, _ in spec_], float), np.array([d for *_, _, d, _ in spec_], float)
+
+
+def test_bootstrap_ci_brackets_point_estimate():
+    rows = []
+    for k in range(6):
+        rows += [(f"P{k}", "correct", "w", 90.0, 90.0 if k < 3 else 50.0, "right")] * 5
+    pairs, m, d = _pairs(rows)
+    ci = ev.bootstrap_ci(pairs, m, d, resamples=500, seed=1)
+    lo, hi = ci["correct_gain"]
+    assert lo <= 0.5 <= hi and lo >= 0.0  # 점추정 +50%p, 모델이 절대 나쁘지 않음
+
+
+def test_per_word_floor_and_left_hand_gap():
+    rows = [("P1", "correct", "a", 90.0, 90.0, "right")] * 9 + [("P1", "correct", "b", 50.0, 90.0, "right")] * 9
+    rows += [("P2", "correct", "a", 90.0, 90.0, "left")] * 5 + [("P2", "correct", "a", 40.0, 90.0, "left")] * 5
+    pairs, m, d = _pairs(rows)
+    words = ev.per_word(pairs, m, d)
+    assert words["b"]["model_pass_rate"] == 0.0 and words["b"]["below_floor"]
+    assert words["a"]["model_pass_rate"] == 14 / 19 and words["a"]["below_floor"]  # 73.7% < 80% 바닥선
+    assert words["a"]["dtw_pass_rate"] == 1.0
+    only_a = [i for i, p in enumerate(pairs) if p.target == "a"]  # 오른손 a 9/9, 왼손 a 5/10
+    lh = ev.left_hand_gap([pairs[i] for i in only_a], m[only_a])
+    assert lh["status"] == "measured" and lh["right"]["pass_rate"] == 1.0 and lh["left"]["pass_rate"] == 0.5
+    assert lh["gap"] == 0.5 and lh["ok"] is False
+
+
+def test_left_hand_no_data_does_not_block():
+    pairs, m, _ = _pairs([("P1", "correct", "a", 90.0, 90.0, "right")])
+    assert ev.left_hand_gap(pairs, m)["ok"] is None
+
+
+def test_decide_groups_and_disabled_words(small):
+    clips, refs = small
+    lm = LabelMap.from_clips(clips)
+    wt = {c.word_key: c.word_type for c in clips if c.word_key in lm.words}
+    pairs = ev.make_pairs(clips, lm)
+    d = ev.score_pairs_dtw(pairs, refs, wt)
+    out = ev.decide(pairs, d, d, wt, seed=0)  # 모델 = DTW로 두면 "확실히 나음"이 아니므로 No-Go
+    assert set(out["groups"]) == {"dynamic", "static"}
+    assert not any(g["decision"]["go"] for g in out["groups"].values())
+    assert out["model_enabled_words"] == []
+    assert set(out["per_word"]) == set(lm.words)
 
 
 # ── end-to-end (합성, 작게) ──
@@ -169,3 +234,5 @@ def test_pipeline_end_to_end_synthetic(tmp_path):
     assert report["synthetic"] and report["conversion"]["tflite"]["pass"]
     manifest = json.loads((out / "manifest.draft.json").read_text())
     assert manifest["enabled"] is False and manifest["artifacts"]["web"]["enabled"] is False  # CTO 조건
+    assert "disabled_words" in manifest and report["final"]["tau_oof"] is not None
+    assert set(report["decision"]["groups"]) == {"dynamic", "static"}
