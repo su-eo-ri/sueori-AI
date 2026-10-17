@@ -1,0 +1,29 @@
+{
+  "name": "sueori-scoring",
+  "version": "0.1.0",
+  "description": "수어리 채점 SDK (온디바이스) — 스펙 ai-io-v1. 앱은 score() 하나만 호출한다",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "private": true
+}
