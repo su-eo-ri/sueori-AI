@@ -16,6 +16,16 @@ Keras로 학습하고, 웹(TF.js)과 Android·iOS(TFLite)로 변환해 온디바
 - 이 레포가 **정본**인 것: Python 기준 구현(`src/sueori_ai/reference.py`)과 공통 테스트 벡터(`vectors/`)
 - 클라이언트: `sueori-FE`(React/TS), `sueori-AOS`(Flutter/Dart), `sueori-IOS`(Swift)는 각자 구현하고 벡터를 통과해야 한다
 
+## 채점 SDK (`sueori-scoring`)
+
+앱(웹·Android·iOS)은 **`score()` 하나만 호출**하고 채점은 SDK가 맡는다(온디바이스, 좌표 미전송). 설치·사용법은 **[`sdk/README.md`](sdk/README.md)**, 변경 내역은 [`CHANGELOG.md`](CHANGELOG.md).
+
+| 언어 | 패키지 | 위치 |
+|---|---|---|
+| TypeScript | `sueori-scoring` | `sdk/ts` |
+| Dart | `sueori_scoring` | `sdk/dart/sueori_scoring` |
+| Swift | `SueoriScoring` | `sdk/swift` (루트 `Package.swift`) |
+
 ## ⚠️ public 레포 — 커밋 금지
 
 - 수집 데이터(실제 촬영자 랜드마크·샘플), 데이터셋 파일

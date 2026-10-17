@@ -1,0 +1,11 @@
+name: sueori_scoring
+description: 수어리 채점 SDK (온디바이스) — 스펙 ai-io-v1. 앱은 score() 하나만 호출한다. 순수 Dart 코어(외부 의존성 없음).
+version: 0.1.0
+publish_to: none
+repository: https://github.com/su-eo-ri/sueori-AI
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dev_dependencies:
+  test: ^1.25.0

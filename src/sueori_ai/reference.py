@@ -262,6 +262,7 @@ def best_track_score(
     """§3 handedness 트랙별로 채점하고 최고점 트랙을 고른다. 채점 가능한 트랙이 없으면 None.
 
     동점이면 먼저 나온 트랙(dict 삽입 순서 = 캡처에서 처음 나타난 순서)을 유지한다.
+    정적은 트랙의 가운데 프레임(⌊N/2⌋), 동적은 트랙 전체(유효 프레임 8개 이상)를 쓴다.
     """
     best: Optional[tuple[str, float]] = None
     for label, frames in tracks.items():
@@ -271,7 +272,8 @@ def best_track_score(
             else:
                 if not frames:
                     continue
-                s = static_score(reference[0], frames[0], spec_version=spec_version).score
+                # 정적: 트랙의 가운데 프레임(⌊N/2⌋). 손모양을 유지하는 동안 여러 장이 들어와도 시작·끝의 움직임을 피한다
+                s = static_score(reference[0], frames[len(frames) // 2], spec_version=spec_version).score
         except InvalidInput:
             continue
         if best is None or s > best[1]:
