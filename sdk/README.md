@@ -64,6 +64,7 @@ Dart(`ScoringEngine().score(ScoreRequest(...))`)와 Swift(`try ScoringEngine().s
 - 좌표는 MediaPipe `landmarks`(이미지 좌표) **그대로** 넣는다. 화면 표시용 좌우 반전을 좌표에 적용하지 않는다
 - 정적 단어는 손모양을 유지하는 동안 여러 장을 넣어도 된다(SDK가 가운데 프레임을 쓴다)
 - **iOS**: 기준 데이터(BE JSON)는 **`JSONDecoder`로 읽는다.** `JSONSerialization`은 일부 실수를 마지막 비트 하나 다르게 읽는다(실측 72,468개 중 285개)
+  - SDK가 `ReferenceJSON.frames(from:)` / `ReferenceJSON.word(wordKey:type:framesJSON:)`을 제공한다(숫자 배열 `[[[x,y,z]]]`과 MVP 객체 형식 `[{"landmarks":[{"x","y","z"}],"tMs"}]`을 모두 받음). 이것을 쓰면 함정을 피할 수 있다
 
 ### ScoreResult
 | 필드 | 뜻 |
@@ -84,7 +85,7 @@ Dart(`ScoringEngine().score(ScoreRequest(...))`)와 Swift(`try ScoringEngine().s
 
 | 환경 | 결과 |
 |---|---|
-| Node 26 (TS) | 18/18 |
+| Node 26 (TS, CI는 Node 18·22) | 18/18 |
 | Chrome 155 headless (TS) | 22/22 (정규화 포함) |
 | Dart VM (macOS) | 18/18 |
 | Android 17 에뮬레이터, Flutter release (Dart) | 18/18 |
