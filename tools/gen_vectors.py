@@ -1,7 +1,10 @@
-"""공통 테스트 벡터 생성: vectors/ai-io-v0-vectors.json
+"""공통 테스트 벡터 생성: vectors/<spec_version>-vectors.json (ai-io-v0, ai-io-v1)
 
-    uv run python tools/gen_vectors.py          # 파일 갱신
+    uv run python tools/gen_vectors.py          # 모든 지원 버전 파일 갱신
     uv run python tools/gen_vectors.py --check  # 커밋된 파일이 코드와 같은지만 확인(CI용)
+
+v0 파일은 기록용으로 유지하며, 코드가 바뀌어도 v0 파일이 바이트 단위로 같게 재생성되어야 한다.
+v1 파일 = v0 케이스(기대값은 v1 규칙으로 다시 계산, `mirrored` 필드 추가) + 반전 전용 케이스.
 
 입력은 합성 데이터만 쓴다(sueori_ai.synthetic). 기대값은 sueori_ai.reference(정본)가 계산한다.
 JSON 실수는 Python repr(가장 짧게 왕복되는 표현)로 써서 Float64 값이 그대로 복원된다.
@@ -21,8 +24,23 @@ from sueori_ai import reference as ref
 from sueori_ai import spec
 from sueori_ai.synthetic import HandPose, hand_frame, jitter, motion, round_frame
 
-OUT = Path(__file__).resolve().parent.parent / "vectors" / f"{spec.SPEC_VERSION}-vectors.json"
+VECTORS_DIR = Path(__file__).resolve().parent.parent / "vectors"
 SEED = 20261015
+
+
+def out_path(version: str) -> Path:
+    return VECTORS_DIR / f"{version}-vectors.json"
+
+
+def _flat_x(frame):
+    """모든 점의 x를 손목 x와 같게 → 정규화 후 x 성분이 전부 0 → 반전해도 같은 벡터(동률 케이스)."""
+    wx = frame[0][0]
+    return [[wx, y, z] for _, y, z in frame]
+
+
+def _mirror_image(frame):
+    """왼손으로 같은 동작을 한 입력(이미지 좌우 반전). 입력값일 뿐이고, 채점 규칙의 반전은 정규화 후 x → −x다."""
+    return round_frame([[1.0 - x, y, z] for x, y, z in frame])
 
 
 def _enc(x):
@@ -39,7 +57,9 @@ def _r(frames):
     return [round_frame(f) for f in frames]
 
 
-def build() -> dict:
+def build(version: str = spec.SPEC_VERSION) -> dict:
+    spec.check_version(version)
+    v1 = spec.MIRROR_FALLBACK[version]
     rng = random.Random(SEED)
 
     open_hand = HandPose()
@@ -110,10 +130,7 @@ def build() -> dict:
         ("v_sign_vs_open", f_v, f_open),
         ("identical", f_v, f_v),
     ]:
-        res = ref.static_score(r, c)
-        static_cases.append(
-            {"name": name, "reference": r, "candidate": c, "expected": {"score": res.score, "distance": res.distance}}
-        )
+        static_cases.append(_static_case(name, r, c, version))
     static_cases.append({"name": "nan_candidate", "reference": f_open, "candidate": f_nan, "invalid": True})
 
     # ── §10.2 DTW ──
@@ -129,15 +146,7 @@ def build() -> dict:
         ("ties_repeated_identical", [f_open, f_open], [f_open, f_open]),
         ("single_vs_many", [f_v], [f_v, f_v, f_open, f_v]),
     ]:
-        res = ref.dtw_score(r, c)
-        dtw_cases.append(
-            {
-                "name": name,
-                "reference": r,
-                "candidate": c,
-                "expected": {"score": res.score, "avg_cost": res.avg_cost, "path_length": res.path_length},
-            }
-        )
+        dtw_cases.append(_dtw_case(name, r, c, version))
     dtw_cases.append(
         {"name": "candidate_too_short_n7", "reference": a_ref, "candidate": a_slow[:7], "invalid": True}
     )
@@ -145,7 +154,7 @@ def build() -> dict:
     # ── §3 트랙별 최고점 ──
     best_cases = []
     tracks = [("Left", c_seq), ("Right", a_slow), ("", still)]
-    best = ref.best_track_score(a_ref, dict(tracks), dynamic=True)
+    best = ref.best_track_score(a_ref, dict(tracks), dynamic=True, spec_version=version)
     best_cases.append(
         {
             "name": "dynamic_three_tracks",
@@ -156,7 +165,7 @@ def build() -> dict:
         }
     )
     tracks = [("Left", [f_nan]), ("Right", [f_open_noisy])]
-    best = ref.best_track_score([f_open], dict(tracks), dynamic=False)
+    best = ref.best_track_score([f_open], dict(tracks), dynamic=False, spec_version=version)
     best_cases.append(
         {
             "name": "static_skips_nan_track",
@@ -177,6 +186,32 @@ def build() -> dict:
         }
     )
 
+    if v1:
+        # ── v1 반전 전용 케이스 (CTO 2026-10-16: 동률 / 반전 우세, 정적·동적 각각) ──
+        f_v_left = _mirror_image(f_v)
+        static_cases += [
+            _static_case("v1_mirror_wins_left_hand", f_v, f_v_left, version),
+            _static_case("v1_mirror_tie_flat_x", f_open, round_frame(_flat_x(f_open)), version),
+            _static_case("v1_mirror_wins_left_hand_noisy", f_open, _mirror_image(f_open_noisy), version),
+        ]
+        a_left = [_mirror_image(f) for f in a_slow]
+        dtw_cases += [
+            _dtw_case("v1_mirror_wins_left_hand", a_ref, a_left, version),
+            _dtw_case("v1_mirror_tie_flat_x", a_ref, [round_frame(_flat_x(f)) for f in a_slow], version),
+            _dtw_case("v1_original_wins_right_hand", a_ref, a_slow, version),
+        ]
+        tracks = [("Right", c_seq), ("Left", a_left)]
+        best = ref.best_track_score(a_ref, dict(tracks), dynamic=True, spec_version=version)
+        best_cases.append(
+            {
+                "name": "v1_left_hand_track_wins_by_mirror",
+                "kind": "dynamic",
+                "reference": a_ref,
+                "tracks": [{"label": k, "frames": v} for k, v in tracks],
+                "expected": {"label": best[0], "score": best[1]},
+            }
+        )
+
     # ── §10.3 녹화 길이 ──
     duration_cases = [
         {"first_t_ms": f, "last_t_ms": l, "expected": ref.recording_duration_ms(f, l)}
@@ -194,7 +229,7 @@ def build() -> dict:
     ]
 
     return {
-        "spec_version": spec.SPEC_VERSION,
+        "spec_version": version,
         "generator": {"script": "tools/gen_vectors.py", "seed": SEED},
         "data_source": "synthetic (sueori_ai.synthetic) — 실제 촬영자 데이터·국립국어원 데이터 미포함",
         "encoding": {
@@ -223,25 +258,44 @@ def build() -> dict:
     }
 
 
-def render() -> str:
-    return json.dumps(_enc(build()), ensure_ascii=False, separators=(",", ":")) + "\n"
+def _static_case(name, r, c, version):
+    res = ref.static_score(r, c, spec_version=version)
+    exp = {"score": res.score, "distance": res.distance}
+    if spec.MIRROR_FALLBACK[version]:
+        exp["mirrored"] = res.mirrored
+    return {"name": name, "reference": r, "candidate": c, "expected": exp}
+
+
+def _dtw_case(name, r, c, version):
+    res = ref.dtw_score(r, c, spec_version=version)
+    exp = {"score": res.score, "avg_cost": res.avg_cost, "path_length": res.path_length}
+    if spec.MIRROR_FALLBACK[version]:
+        exp["mirrored"] = res.mirrored
+    return {"name": name, "reference": r, "candidate": c, "expected": exp}
+
+
+def render(version: str = spec.SPEC_VERSION) -> str:
+    return json.dumps(_enc(build(version)), ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="파일을 쓰지 않고 커밋된 파일과 같은지만 확인")
     args = ap.parse_args()
-    text = render()
-    if args.check:
-        if not OUT.exists() or OUT.read_text(encoding="utf-8") != text:
-            print(f"✗ {OUT.name}가 코드와 다름 — tools/gen_vectors.py를 다시 실행할 것", file=sys.stderr)
-            return 1
-        print(f"✓ {OUT.name} 최신")
-        return 0
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(text, encoding="utf-8")
-    print(f"wrote {OUT} ({len(text):,} bytes)")
-    return 0
+    bad = 0
+    for version in spec.SUPPORTED_VERSIONS:
+        out, text = out_path(version), render(version)
+        if args.check:
+            if not out.exists() or out.read_text(encoding="utf-8") != text:
+                print(f"✗ {out.name}가 코드와 다름 — tools/gen_vectors.py를 다시 실행할 것", file=sys.stderr)
+                bad += 1
+            else:
+                print(f"✓ {out.name} 최신")
+            continue
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote {out} ({len(text):,} bytes)")
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
