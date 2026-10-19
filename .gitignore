@@ -42,3 +42,12 @@ node_modules/
 
 # OS
 .DS_Store
+
+# SDK 빌드 산출물
+sdk/ts/dist/
+*.tgz
+.dart_tool/
+sdk/dart/**/pubspec.lock
+.build/
+.swiftpm/
+Package.resolved

@@ -200,6 +200,22 @@ def build(version: str = spec.SPEC_VERSION) -> dict:
             _dtw_case("v1_mirror_tie_flat_x", a_ref, [round_frame(_flat_x(f)) for f in a_slow], version),
             _dtw_case("v1_original_wins_right_hand", a_ref, a_slow, version),
         ]
+        # 정적 트랙이 여러 장일 때 가운데 프레임(⌊N/2⌋)만 쓰는지 검증(CTO 2026-10-18): 가운데만 정답 자세
+        for name, frames_ in [
+            ("v1_static_middle_frame_odd3", [f_fist, f_open_noisy, f_fist]),
+            ("v1_static_middle_frame_even4", [f_fist, f_fist, f_open_noisy, f_fist]),
+        ]:
+            st_tracks = [("Right", frames_)]
+            st_best = ref.best_track_score([f_open], dict(st_tracks), dynamic=False, spec_version=version)
+            best_cases.append(
+                {
+                    "name": name,
+                    "kind": "static",
+                    "reference": [f_open],
+                    "tracks": [{"label": k, "frames": v} for k, v in st_tracks],
+                    "expected": {"label": st_best[0], "score": st_best[1]},
+                }
+            )
         tracks = [("Right", c_seq), ("Left", a_left)]
         best = ref.best_track_score(a_ref, dict(tracks), dynamic=True, spec_version=version)
         best_cases.append(

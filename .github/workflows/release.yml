@@ -1,0 +1,41 @@
+# 태그 v<버전>을 push하면 세 SDK 버전이 태그와 같은지 확인하고, TS SDK tarball을 GitHub Release에 첨부한다.
+# Dart(pub git+ref+path)와 Swift(루트 Package.swift + 태그)는 태그 자체가 배포다(CTO 2026-10-18).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 태그와 SDK 버전(lockstep) 일치 확인
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          TS=$(node -p "require('./sdk/ts/package.json').version")
+          DART=$(sed -n 's/^version:[[:space:]]*//p' sdk/dart/sueori_scoring/pubspec.yaml)
+          SWIFT=$(sed -n 's/.*sdkVersion = "\(.*\)".*/\1/p' sdk/swift/Sources/SueoriScoring/Spec.swift)
+          echo "tag=$TAG ts=$TS dart=$DART swift=$SWIFT"
+          test "$TAG" = "$TS" && test "$TAG" = "$DART" && test "$TAG" = "$SWIFT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: TS SDK 빌드·테스트·패키징
+        working-directory: sdk/ts
+        run: |
+          npm ci
+          npm test
+          npm pack
+      - name: GitHub Release 생성 + tarball 첨부
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" sdk/ts/sueori-scoring-*.tgz \
+            --title "$GITHUB_REF_NAME" \
+            --notes "채점 SDK $GITHUB_REF_NAME (TS·Dart·Swift lockstep). 설치 방법은 sdk/README.md 참고." \
+            --verify-tag
