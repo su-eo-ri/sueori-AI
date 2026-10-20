@@ -1,0 +1,60 @@
+# 기준 구현·공통 테스트 벡터·세 SDK(TS·Dart·Swift)를 한 워크플로에서 검증한다(CTO 2026-10-18).
+# 벡터가 바뀐 PR은 세 SDK 테스트가 모두 통과해야 머지한다(브랜치 보호의 필수 체크로 이 job들을 지정).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    # 벡터는 macOS arm64 / Python 3.11에서 생성했다. exp의 마지막 비트가 libm마다 다를 수 있어
+    # `gen_vectors --check`(문자열 완전 일치)는 생성 환경과 같은 macOS에서 돌린다.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run python tools/gen_vectors.py --check
+      - run: uv run pytest -q
+
+  ts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 22]  # package.json engines >=18 (CTO 2026-10-18)
+    defaults:
+      run:
+        working-directory: sdk/ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+
+  dart:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/dart/sueori_scoring
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift test

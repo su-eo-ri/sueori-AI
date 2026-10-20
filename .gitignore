@@ -1,0 +1,53 @@
+# ── 이 레포는 public이다. 아래 항목은 절대 커밋하지 않는다 (CTO 2026-10-15) ──
+
+# 수집 데이터(실제 촬영자 랜드마크)·데이터셋
+data/
+datasets/
+*.npz
+*.npy
+*.parquet
+*.csv
+
+# 학습·변환 산출물(모델 가중치 커밋 여부는 별도 결정 전까지 금지)
+models/
+*.h5
+*.keras
+*.tflite
+*.pb
+saved_model/
+*.bin
+build/
+checkpoints/
+
+# 시크릿·자격증명(업로드 스크립트는 환경변수로만 받는다)
+.env
+.env.*
+*.pem
+*.key
+credentials*.json
+
+# 동의서·가명 매핑
+consent/
+*mapping*.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Node (tools/tfjs_smoke)
+node_modules/
+
+# OS
+.DS_Store
+
+# SDK 빌드 산출물
+sdk/ts/dist/
+*.tgz
+.dart_tool/
+sdk/dart/**/pubspec.lock
+.build/
+.swiftpm/
+Package.resolved
