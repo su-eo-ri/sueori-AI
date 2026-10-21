@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -55,7 +56,8 @@ def split_validation(ex: Examples, fraction: float, seed: int) -> tuple[Examples
     촬영자가 2명 이상이면 **촬영자 단위**로 1명을 뺀다(스펙 §6 "학습에 쓰지 않은 사람" 기준, CTO 2026-10-16).
     1명뿐이면 sample_id 단위로 나눈다(같은 클립의 여러 프레임이 양쪽에 나뉘지 않게).
 
-    어느 쪽이든 **어떤 클래스를 학습 데이터에서 완전히 비우는 sample_id는 검증셋으로 보내지 않는다.**
+    촬영자 1명일 때는 **어떤 클래스를 학습 데이터에서 완전히 비우는 sample_id를 검증셋으로 보내지 않는다.**
+    (촬영자 단위 분할에는 이 보호가 없다. 그 사람만 찍은 단어가 있으면 같은 문제가 생기므로 수집 시 주의)
     클래스가 통째로 빠지면 그 클래스의 val_loss는 구조적으로 개선될 수 없어서 `EarlyStopping`이
     (실제로는 전혀 수렴하지 않았는데도) 첫 에폭 근처에서 멈춰버린다 — 단어당 예제가 1~3개뿐인
     소표본 실데이터로 재현됨(2026-10-21, KCISA 47단어 학습 시도). 뺄 수 있는 sample_id가 없으면
@@ -121,10 +123,14 @@ def train(ex: Examples, num_classes: int, cfg: TrainConfig = TrainConfig()) -> t
     )
     # split_validation이 검증셋을 못 만들면(클래스 수 대비 예제가 너무 적음) 학습 데이터로
     # 온도를 보정한다 — 조기 종료는 못 쓰므로 cfg.epochs를 그대로 다 돈다.
+    # 학습 데이터로 보정한 τ는 확신도를 과대평가해 점수(통과선 80)를 부풀리므로 드라이런 전용이다.
     calib_x, calib_y = (va.x, va.y) if has_val else (x, y)
     tau = calibrate_temperature(model.predict(calib_x, verbose=0), calib_y)
+    if not has_val:
+        warnings.warn("검증셋이 비어 학습 데이터로 τ를 보정함 — 평가·배포에 쓰지 말 것(드라이런 전용)", stacklevel=2)
     val_loss = float(min(hist.history["val_loss"])) if has_val else None
-    return model, tau, {"epochs_run": len(hist.history["loss"]), "val_loss": val_loss, "tau": tau}
+    return model, tau, {"epochs_run": len(hist.history["loss"]), "val_loss": val_loss, "tau": tau,
+                        "tau_source": "val" if has_val else "train"}
 
 
 def softmax(logits: np.ndarray, tau: float = 1.0) -> np.ndarray:

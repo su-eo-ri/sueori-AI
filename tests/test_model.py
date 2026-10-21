@@ -9,6 +9,7 @@ EarlyStopping이 사실상 학습 안 된 상태(1~2에폭)에서 멈춰버린�
 """
 
 import numpy as np
+import pytest
 
 from sueori_ai import spec
 from sueori_ai.dataset import Examples
@@ -63,8 +64,10 @@ def test_train_handles_empty_validation_without_crashing():
     # 전부 싱글톤 클래스라 검증셋이 비는 극단 상황에서도 train()이 죽지 않아야 한다
     ex = _examples([[1]] * 6)
     cfg = TrainConfig(epochs=3, batch_size=2, mirror_augment=False)
-    model, tau, info = train(ex, num_classes=6, cfg=cfg)
+    with pytest.warns(UserWarning, match="드라이런 전용"):
+        model, tau, info = train(ex, num_classes=6, cfg=cfg)
     assert info["val_loss"] is None
+    assert info["tau_source"] == "train"
     assert info["epochs_run"] == 3
     assert 0.25 <= tau <= 8.0
     logits = model.predict(ex.x, verbose=0)
