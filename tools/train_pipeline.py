@@ -27,7 +27,14 @@ from sueori_ai import convert  # noqa: F401  (TF_USE_LEGACY_KERAS를 먼저 설�
 from sueori_ai import evaluate as ev
 from sueori_ai import spec, synthetic_clips
 from sueori_ai.clips import from_record, load_clips, write_clips
-from sueori_ai.dataset import LabelMap, build_examples, load_references, participant_folds, save_references
+from sueori_ai.dataset import (
+    LabelMap,
+    build_examples,
+    load_references,
+    participant_folds,
+    save_references,
+    single_participant_words,
+)
 from sueori_ai.model import TrainConfig, calibrate_temperature, train
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -136,6 +143,9 @@ def main() -> int:
         return 1
     n_people = len({c.participant_id for c in clips})
     print(f"데이터: {data_source} · 클립 {len(clips)} · 촬영자 {n_people} · 단어 {len(label_map.words)} (+other)")
+    lonely = single_participant_words(clips)
+    if lonely:
+        print(f"⚠️ 촬영자가 1명뿐인 단어 {len(lonely)}개(그 촬영자 fold에서 학습 불가, 프로토콜: 단어마다 2명 이상): {', '.join(lonely)}")
 
     cfg = TrainConfig(epochs=args.epochs, seed=args.seed)
     print("교차 검증(촬영자 단위):")
@@ -149,8 +159,9 @@ def main() -> int:
     model, tau_self, info = train(build_examples(clips, label_map), len(label_map.classes), cfg)
     tau = tau_oof if tau_oof is not None else tau_self
     print(f"  τ: out-of-fold {tau_oof if tau_oof is None else round(tau_oof, 2)} (사용) · 최종 학습 검증 {tau_self:.2f} (참고)")
-    if tau_oof is None and info["tau_source"] == "train":
-        print("  ⚠️ τ를 학습 데이터로 보정함(촬영자 1명·검증셋 없음) — 이 산출물은 평가·배포에 쓰지 말 것")
+    if tau_oof is None:
+        # 검증셋이 있어도(tau_source="val") 같은 촬영자 클립으로 보정한 값이라 out-of-fold가 아니다(CTO 2026-10-21)
+        print(f"  ⚠️ out-of-fold τ 없음 — 학습 촬영자 데이터({info['tau_source']})로 보정함. 이 산출물은 평가·배포에 쓰지 말 것")
     model.save(out / "model.h5")
     labels = label_map.to_labels_json(model_version=args.model_version, temperature=tau)
     (out / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -230,6 +241,14 @@ def main() -> int:
         "dtw": d_sum,
         "decision": decision,
         "final": {"tau": tau, "tau_oof": tau_oof, "tau_final_val": tau_self, **info},
+        # τ 출처(labels.json 스펙 §5는 그대로 두고 리포트에만 기록, CTO 2026-10-21)
+        "calibration": {
+            "tau_used": "oof" if tau_oof is not None else f"final_{info['tau_source']}",
+            "has_oof": tau_oof is not None,
+            "final_tau_source": info["tau_source"],
+            "n_people": n_people,
+        },
+        "single_participant_words": lonely,
         "conversion": conv,
         "release": {"requested": args.release, "conversion_ok": conversion_ok, "blocked": release_blocked},
     }
@@ -258,6 +277,12 @@ def render_report(r: dict, m_sum: dict, d_sum: dict) -> str:
         f"최종 학습 검증 참고값 {r['final']['tau_final_val']:.2f})",
         f"- 변환: TFLite {r['conversion']['tflite'].get('pass', '—')} / TF.js {r['conversion']['tfjs'].get('pass', '—')}"
         + (" · ⛔ 배포 후보 모드 차단" if r["release"]["blocked"] else ""),
+    ]
+    if not r["calibration"]["has_oof"]:
+        lines.append(f"- ⚠️ out-of-fold τ 없음(τ 출처: {r['calibration']['tau_used']}) — 평가·배포에 쓰지 말 것")
+    if r["single_participant_words"]:
+        lines.append(f"- ⚠️ 촬영자 1명뿐인 단어: {', '.join(r['single_participant_words'])}")
+    lines += [
         "",
         "## 스펙 §6 보정 목표 — 모델 vs DTW 폴백 (전체)",
         "",
