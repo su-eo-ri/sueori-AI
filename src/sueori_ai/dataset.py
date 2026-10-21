@@ -111,6 +111,19 @@ def build_examples(clips: Sequence[Clip], label_map: LabelMap, *, static_frames_
     return Examples(np.stack(xs), np.asarray(ys), np.asarray(ps), np.asarray(ss), np.asarray(ls), np.asarray(ws))
 
 
+def single_participant_words(clips: Sequence[Clip]) -> list[str]:
+    """정답(correct) 클립의 촬영자가 1명뿐인 word_key 목록(정렬).
+
+    촬영자 단위 교차 검증에서 그 사람이 평가 촬영자가 되면 fold 모델은 그 단어를 학습하지 못한다.
+    수집 프로토콜 필수 조건 "단어마다 촬영자 2명 이상"의 검사용(CTO 2026-10-21).
+    """
+    people: dict[str, set[str]] = {}
+    for c in clips:
+        if c.label == "correct":
+            people.setdefault(c.word_key, set()).add(c.participant_id)
+    return sorted(w for w, ps in people.items() if len(ps) < 2)
+
+
 def participant_folds(participants: Sequence[str]) -> Iterator[tuple[list[str], str]]:
     """촬영자 단위 교차 검증(leave-one-participant-out, 스펙 §9.3·프로토콜 §8): (학습 촬영자들, 평가 촬영자)."""
     ps = sorted(set(participants))

@@ -72,3 +72,18 @@ def test_train_handles_empty_validation_without_crashing():
     assert 0.25 <= tau <= 8.0
     logits = model.predict(ex.x, verbose=0)
     assert logits.shape == (6, 6)
+
+
+def test_single_participant_words_lists_words_with_one_person():
+    from sueori_ai.clips import Clip
+    from sueori_ai.dataset import single_participant_words
+
+    def clip(sid, pid, word, label="correct"):
+        return Clip(sample_id=sid, participant_id=pid, word_key=word, word_type="static", label=label, frames=[])
+
+    clips = [
+        clip("a", "P1", "엄마"), clip("b", "P2", "엄마"),            # 2명 → 정상
+        clip("c", "P1", "아빠"), clip("d", "P1", "아빠"),            # 1명이 두 번 → 해당
+        clip("e", "P1", "형"), clip("f", "P2", "형", "near_miss"),   # 정답은 1명뿐 → 해당
+    ]
+    assert single_participant_words(clips) == ["아빠", "형"]
