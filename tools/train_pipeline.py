@@ -149,6 +149,8 @@ def main() -> int:
     model, tau_self, info = train(build_examples(clips, label_map), len(label_map.classes), cfg)
     tau = tau_oof if tau_oof is not None else tau_self
     print(f"  τ: out-of-fold {tau_oof if tau_oof is None else round(tau_oof, 2)} (사용) · 최종 학습 검증 {tau_self:.2f} (참고)")
+    if tau_oof is None and info["tau_source"] == "train":
+        print("  ⚠️ τ를 학습 데이터로 보정함(촬영자 1명·검증셋 없음) — 이 산출물은 평가·배포에 쓰지 말 것")
     model.save(out / "model.h5")
     labels = label_map.to_labels_json(model_version=args.model_version, temperature=tau)
     (out / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
