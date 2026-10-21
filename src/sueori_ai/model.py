@@ -54,6 +54,12 @@ def split_validation(ex: Examples, fraction: float, seed: int) -> tuple[Examples
 
     촬영자가 2명 이상이면 **촬영자 단위**로 1명을 뺀다(스펙 §6 "학습에 쓰지 않은 사람" 기준, CTO 2026-10-16).
     1명뿐이면 sample_id 단위로 나눈다(같은 클립의 여러 프레임이 양쪽에 나뉘지 않게).
+
+    어느 쪽이든 **어떤 클래스를 학습 데이터에서 완전히 비우는 sample_id는 검증셋으로 보내지 않는다.**
+    클래스가 통째로 빠지면 그 클래스의 val_loss는 구조적으로 개선될 수 없어서 `EarlyStopping`이
+    (실제로는 전혀 수렴하지 않았는데도) 첫 에폭 근처에서 멈춰버린다 — 단어당 예제가 1~3개뿐인
+    소표본 실데이터로 재현됨(2026-10-21, KCISA 47단어 학습 시도). 뺄 수 있는 sample_id가 없으면
+    검증셋은 빈 채로 반환한다 — `train()`이 이를 감지해 검증 없이 학습한다.
     """
     rng = np.random.default_rng(seed)
     people = np.unique(ex.participant)
@@ -61,8 +67,30 @@ def split_validation(ex: Examples, fraction: float, seed: int) -> tuple[Examples
         held = rng.choice(people)
         mask = ex.participant == held
         return ex.subset(~mask), ex.subset(mask)
-    ids = np.unique(ex.sample_id)
-    val_ids = set(rng.choice(ids, size=max(1, int(len(ids) * fraction)), replace=False).tolist())
+
+    ids = list(np.unique(ex.sample_id))
+    rng.shuffle(ids)
+    target = max(1, int(len(ids) * fraction))
+
+    sid_classes: dict[str, set[int]] = {}
+    for sid, y in zip(ex.sample_id, ex.y):
+        sid_classes.setdefault(sid, set()).add(int(y))
+    remaining: dict[int, int] = {}
+    for classes in sid_classes.values():
+        for c in classes:
+            remaining[c] = remaining.get(c, 0) + 1
+
+    val_ids: set[str] = set()
+    for sid in ids:
+        if len(val_ids) >= target:
+            break
+        classes = sid_classes[sid]
+        if any(remaining[c] <= 1 for c in classes):
+            continue  # 이 sample_id를 빼면 학습에서 완전히 사라지는 클래스가 생김
+        val_ids.add(sid)
+        for c in classes:
+            remaining[c] -= 1
+
     mask = np.array([s in val_ids for s in ex.sample_id])
     return ex.subset(~mask), ex.subset(mask)
 
@@ -81,17 +109,22 @@ def train(ex: Examples, num_classes: int, cfg: TrainConfig = TrainConfig()) -> t
         loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         metrics=["accuracy"],
     )
+    has_val = len(va) > 0
     hist = model.fit(
         x, y,
-        validation_data=(va.x, va.y),
+        validation_data=(va.x, va.y) if has_val else None,
         epochs=cfg.epochs,
         batch_size=cfg.batch_size,
         class_weight=_class_weights(y, num_classes),
-        callbacks=[keras.callbacks.EarlyStopping(patience=cfg.patience, restore_best_weights=True)],
+        callbacks=[keras.callbacks.EarlyStopping(patience=cfg.patience, restore_best_weights=True)] if has_val else [],
         verbose=0,
     )
-    tau = calibrate_temperature(model.predict(va.x, verbose=0), va.y)
-    return model, tau, {"epochs_run": len(hist.history["loss"]), "val_loss": float(min(hist.history["val_loss"])), "tau": tau}
+    # split_validation이 검증셋을 못 만들면(클래스 수 대비 예제가 너무 적음) 학습 데이터로
+    # 온도를 보정한다 — 조기 종료는 못 쓰므로 cfg.epochs를 그대로 다 돈다.
+    calib_x, calib_y = (va.x, va.y) if has_val else (x, y)
+    tau = calibrate_temperature(model.predict(calib_x, verbose=0), calib_y)
+    val_loss = float(min(hist.history["val_loss"])) if has_val else None
+    return model, tau, {"epochs_run": len(hist.history["loss"]), "val_loss": val_loss, "tau": tau}
 
 
 def softmax(logits: np.ndarray, tau: float = 1.0) -> np.ndarray:
