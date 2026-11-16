@@ -113,7 +113,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--release", action="store_true",
-                    help="배포 후보 모드: TFLite·TF.js 일치성이 둘 다 PASS가 아니면 실패로 끝내고 매니페스트를 만들지 않음")
+                    help="배포 후보 모드: TFLite·TF.js 일치성이 둘 다 PASS가 아니거나 out-of-fold τ가 없으면 실패로 끝내고 매니페스트를 만들지 않음")
     args = ap.parse_args()
 
     run = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -188,22 +188,12 @@ def main() -> int:
 
     # 변환 일치성 벡터 후보(스펙 §8) — 입력이 합성이라 커밋 가능. 실제 모델 PR에서 vectors/에 올린다
     (out / "conversion-vectors.json").write_text(
-        json.dumps(
-            {
-                "spec_version": spec.SPEC_VERSION,
-                "model_version": args.model_version,
-                "temperature": tau,
-                "data_source": "synthetic fixed inputs (sueori_ai.convert.fixed_inputs)",
-                "inputs": x.tolist(),
-                "keras_logits": keras_logits.tolist(),
-                "tolerances": {"logit": convert.TOL_LOGIT, "score": convert.TOL_SCORE, "verdict": "exact"},
-            }
-        ),
-        encoding="utf-8",
+        json.dumps(convert.parity_vectors(x, keras_logits, tau=tau, model_version=args.model_version)), encoding="utf-8"
     )
 
     conversion_ok = all(v.get("pass") is True for v in conv.values())
-    release_blocked = args.release and not conversion_ok
+    # out-of-fold τ가 없으면 점수 보정이 학습 촬영자 기준이라 배포 후보가 될 수 없다(CTO 2026-10-21 비차단 제안)
+    release_blocked = args.release and (not conversion_ok or tau_oof is None)
 
     # 매니페스트 초안(스펙 §7.1). 웹은 FE 연동 확인 전까지 enabled=false(CTO 2026-10-16).
     # 배포 후보 모드에서 변환 일치성이 둘 다 PASS가 아니면 만들지 않는다(CTO 2026-10-16)
@@ -240,7 +230,7 @@ def main() -> int:
         "model": m_sum,
         "dtw": d_sum,
         "decision": decision,
-        "final": {"tau": tau, "tau_oof": tau_oof, "tau_final_val": tau_self, **info},
+        "final": {**info, "tau": tau, "tau_oof": tau_oof, "tau_final_val": tau_self},  # info["tau"](최종 학습 검증)가 사용 τ를 덮지 않게
         # τ 출처(labels.json 스펙 §5는 그대로 두고 리포트에만 기록, CTO 2026-10-21)
         "calibration": {
             "tau_used": "oof" if tau_oof is not None else f"final_{info['tau_source']}",
@@ -256,7 +246,7 @@ def main() -> int:
     (out / "report.md").write_text(render_report(report, m_sum, d_sum), encoding="utf-8")
     print(f"\n{(out / 'report.md').read_text(encoding='utf-8')}\n→ {out}")
     if release_blocked:
-        print("✗ 배포 후보 모드: 변환 일치성이 둘 다 PASS가 아니라 매니페스트를 만들지 않았음", file=sys.stderr)
+        print("✗ 배포 후보 모드: 변환 일치성이 둘 다 PASS가 아니거나 out-of-fold τ가 없어 매니페스트를 만들지 않았음", file=sys.stderr)
         return 2
     return 0
 
