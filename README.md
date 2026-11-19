@@ -104,7 +104,7 @@ uv run python tools/train_pipeline.py --data /path/to/snapshot --references /pat
 3. 스펙 §6 보정 목표 표(정답 / 다른 단어 / 정지 자세 / 무관 동작 / 근접 오답)를 모델·DTW 양쪽으로 만들고 Go/No-Go를 판정한다
 4. 전체 촬영자로 최종 학습 → `labels.json`, TFLite(Android·iOS 같은 파일), TF.js 변환 → 변환 일치성 검사
 5. `build/train/<run>/`에 `report.md`·`report.json`, `labels.json`, `manifest.draft.json`(웹 `enabled=false`),
-   `conversion-vectors.json`(합성 고정 입력 + Keras 로짓), `artifacts/{web,android,ios}`
+   `conversion-vectors.json`(스펙 §8: 합성 고정 입력 + Keras 로짓 + 모든 클래스의 기대 점수·통과 판정), `artifacts/{web,android,ios}`
 
 > **Go/No-Go 기준은 초안이다**(`evaluate.GO_DRAFT`): §6 목표를 모두 충족하고, DTW보다 확실히 나으며(정답 통과율 +10%p 이상
 > 또는 오답 통과율이 DTW의 절반 이하), 어느 범주에서도 DTW보다 2%p 넘게 나빠지지 않아야 한다. PM·사용자 합의가 필요하다.

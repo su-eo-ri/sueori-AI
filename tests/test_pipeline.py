@@ -236,3 +236,6 @@ def test_pipeline_end_to_end_synthetic(tmp_path):
     assert manifest["enabled"] is False and manifest["artifacts"]["web"]["enabled"] is False  # CTO 조건
     assert "disabled_words" in manifest and report["final"]["tau_oof"] is not None
     assert set(report["decision"]["groups"]) == {"dynamic", "static"}
+    vec = json.loads((out / "conversion-vectors.json").read_text())
+    assert vec["temperature"] == report["final"]["tau"] and len(vec["inputs"]) == len(vec["expected_scores"]) == 4
+    assert len(vec["keras_logits"][0]) == len(json.loads((out / "labels.json").read_text())["labels"])

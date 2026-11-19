@@ -11,6 +11,8 @@ import os
 
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+# tensorflowjs가 끌어오는 tfdf는 stdout이 가로채지면(pytest) 노트북으로 오판해 IPython을 import한다
+os.environ.setdefault("TFDF_DISABLE_WELCOME_MESSAGE", "1")
 
 import hashlib  # noqa: E402
 import json  # noqa: E402
@@ -101,13 +103,19 @@ def _softmax(z: np.ndarray, tau: float) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
-def compare(got: np.ndarray, keras_logits: np.ndarray, *, tau: float = 1.0, targets: Optional[np.ndarray] = None) -> dict:
-    """스펙 §8 변환 일치성: 로짓 ≤ 1e-4, 점수 ≤ 0.1, 80점 통과 판정 일치."""
-    if targets is None:
-        targets = keras_logits.argmax(axis=-1)
-    idx = np.arange(len(targets))
-    s_ref = 100 * _softmax(keras_logits, tau)[idx, targets]
-    s_got = 100 * _softmax(got, tau)[idx, targets]
+def scores(logits: np.ndarray, tau: float) -> np.ndarray:
+    """스펙 §6 점수 — 모든 클래스를 target으로 본 `100 × softmax(logits / τ)`, shape [N, 클래스]."""
+    return 100 * _softmax(np.asarray(logits, dtype=np.float64), tau)
+
+
+def compare(got: np.ndarray, keras_logits: np.ndarray, *, tau: float = 1.0) -> dict:
+    """스펙 §8 변환 일치성: 로짓 ≤ 1e-4, 점수 ≤ 0.1, 80점 통과 판정 일치.
+
+    점수는 argmax 하나가 아니라 **모든 클래스**를 target으로 놓고 비교한다 — 앱은 사용자가 고른 단어를
+    target으로 쓰므로, 근접 오답처럼 argmax가 아닌 단어의 부분 점수(40~75)도 0.1점 안에 들어와야 한다.
+    (80점 ≥ 50%라 통과 판정이 걸리는 클래스는 항상 argmax다)
+    """
+    s_ref, s_got = scores(keras_logits, tau), scores(got, tau)
     logit_err = float(np.abs(got - keras_logits).max())
     score_err = float(np.abs(s_got - s_ref).max())
     same = bool(np.array_equal(s_ref >= spec.PASS_THRESHOLD, s_got >= spec.PASS_THRESHOLD))
@@ -116,6 +124,29 @@ def compare(got: np.ndarray, keras_logits: np.ndarray, *, tau: float = 1.0, targ
         "max_score_err": score_err,
         "verdict_same": same,
         "pass": logit_err <= TOL_LOGIT and score_err <= TOL_SCORE and same,
+    }
+
+
+def parity_vectors(x: np.ndarray, keras_logits: np.ndarray, *, tau: float, model_version: str) -> dict:
+    """변환 일치성 벡터(스펙 §8). 클라이언트 테스트는 변환본에 `inputs`를 넣고 아래를 확인한다:
+    로짓이 `keras_logits`와 ≤ 1e-4, `expected_scores`와 ≤ 0.1점, `expected_pass`(≥ 80)와 정확히 일치.
+
+    입력은 합성(fixed_inputs)이라 public 레포에 커밋 가능. 모델 가중치는 커밋하지 않으므로 이 파일은
+    배포된 같은 model_version의 변환본과 짝을 이룬다.
+    """
+    s = scores(keras_logits, tau)
+    return {
+        "spec_version": spec.SPEC_VERSION,
+        "model_version": model_version,
+        "temperature": tau,
+        "data_source": "synthetic fixed inputs (sueori_ai.convert.fixed_inputs)",
+        "score_formula": "100 * softmax(logits / temperature)[target], 모든 클래스를 target으로 계산",
+        "pass_threshold": spec.PASS_THRESHOLD,
+        "inputs": np.asarray(x).tolist(),
+        "keras_logits": np.asarray(keras_logits).tolist(),
+        "expected_scores": s.tolist(),
+        "expected_pass": (s >= spec.PASS_THRESHOLD).tolist(),
+        "tolerances": {"logit": TOL_LOGIT, "score": TOL_SCORE, "verdict": "exact"},
     }
 
 
