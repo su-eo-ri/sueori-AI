@@ -23,6 +23,7 @@ from typing import Optional  # noqa: E402
 import numpy as np  # noqa: E402
 import tensorflow as tf  # noqa: E402
 import tensorflowjs as tfjs  # noqa: E402
+import tf_keras  # noqa: E402
 
 from . import reference as ref  # noqa: E402
 from . import spec  # noqa: E402
@@ -49,8 +50,15 @@ def fixed_inputs() -> np.ndarray:
     return np.asarray(tensors, dtype=np.float32)
 
 
+def _fixed_batch(model):
+    """입력을 [1, T, F]로 고정한 래퍼. 동적 배치([-1, T, F])면 LiteRT `CompiledModel.createInputBuffers()`가
+    실패한다(iOS LiteRT 2.3.0 확인). 채점은 녹화 1건씩 추론하므로 배치 1이면 충분하다."""
+    inp = tf_keras.Input(shape=model.input_shape[1:], batch_size=1, name=model.input_names[0])
+    return tf_keras.Model(inp, model(inp))
+
+
 def to_tflite(model, path: Path) -> tuple[Optional[Path], str]:
-    conv = tf.lite.TFLiteConverter.from_keras_model(model)
+    conv = tf.lite.TFLiteConverter.from_keras_model(_fixed_batch(model))
     conv.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
     try:
         blob = conv.convert()
@@ -63,9 +71,8 @@ def to_tflite(model, path: Path) -> tuple[Optional[Path], str]:
 
 def tflite_predict(path: Path, x: np.ndarray) -> np.ndarray:
     interp = tf.lite.Interpreter(model_path=str(path))
-    inp, out = interp.get_input_details()[0], interp.get_output_details()[0]
-    interp.resize_tensor_input(inp["index"], [1, spec.SEQUENCE_LENGTH, spec.FEATURES])
     interp.allocate_tensors()
+    inp, out = interp.get_input_details()[0], interp.get_output_details()[0]
     ys = []
     for row in x:
         interp.set_tensor(inp["index"], row[None, ...].astype(np.float32))

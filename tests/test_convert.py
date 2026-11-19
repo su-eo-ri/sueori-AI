@@ -1,8 +1,23 @@
 """변환 일치성 비교·벡터(스펙 §8)."""
 
 import numpy as np
+import tensorflow as tf
 
 from sueori_ai import convert, spec
+from sueori_ai.model import build_cnn
+
+
+def test_tflite_input_is_fixed_batch_1(tmp_path):
+    # 동적 배치(-1)면 LiteRT CompiledModel.createInputBuffers()가 실패한다
+    model = build_cnn(5)
+    path, msg = convert.to_tflite(model, tmp_path / "model.tflite")
+    assert path is not None, msg
+    inp = tf.lite.Interpreter(model_path=str(path)).get_input_details()[0]
+    expected = [1, spec.SEQUENCE_LENGTH, spec.FEATURES]
+    assert inp["shape"].tolist() == expected and inp["shape_signature"].tolist() == expected
+    x = convert.fixed_inputs()
+    r = convert.compare(convert.tflite_predict(path, x), model.predict(x, verbose=0))
+    assert r["pass"], r
 
 
 def test_compare_passes_identical_logits():
